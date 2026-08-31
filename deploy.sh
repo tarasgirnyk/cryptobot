@@ -32,8 +32,14 @@ fi
 PORT="$(sed -n 's/^CRYPTBOT_PUBLIC_PORT=\([0-9]\+\).*/\1/p' .env | head -1)"
 PORT="${PORT:-8765}"
 
+PROFILES=()
+if [[ -f Caddyfile ]]; then
+  PROFILES=(--profile proxy)
+  echo "==> Caddyfile present — enabling public HTTPS proxy"
+fi
+
 echo "==> docker compose up -d --build"
-docker compose up -d --build
+docker compose "${PROFILES[@]}" up -d --build
 
 echo "==> docker compose ps"
 docker compose ps

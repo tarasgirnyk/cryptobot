@@ -1,0 +1,38 @@
+# Public HTTPS + Basic Auth for the panel.
+#
+# Setup on the server:
+#   cp Caddyfile.example Caddyfile
+#   # generate a bcrypt hash for your password:
+#   docker run --rm caddy caddy hash-password --plaintext 'YOUR_PASSWORD'
+#   # paste the $2a$... hash below, replacing REPLACE_WITH_BCRYPT_HASH
+#   docker compose --profile proxy up -d
+#
+# Then open  https://<server-ip>/  (browser warns once about the self-signed
+# cert — Caddy's internal CA; accept it). Log in as the user set below.
+#
+# Replace 91.245.76.78 with your server IP or domain. With a real domain that
+# resolves here, swap `tls internal` for a plain `tls you@email` to get a
+# publicly-trusted Let's Encrypt cert and no browser warning.
+
+{
+	admin off
+}
+
+https://91.245.76.78 {
+	tls internal
+
+	basicauth {
+		admin REPLACE_WITH_BCRYPT_HASH
+	}
+
+	reverse_proxy cryptobot:8765
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+	}
+}
+
+http://91.245.76.78 {
+	redir https://{host}{uri} permanent
+}

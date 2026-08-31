@@ -18,6 +18,8 @@ services:
       # BINGX_API_KEYS_FILE: /run/secrets/bingx_api_keys
       # TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram_bot_token
       # API_BEARER_TOKEN_FILE: /run/secrets/api_bearer_token
+    # Panel stays on loopback; the caddy service below is the only public door.
+    # Keep this for local SSH-tunnel access (ssh -L 8771:127.0.0.1:8771 ...).
     ports:
       - "127.0.0.1:${CRYPTBOT_PUBLIC_PORT:-8765}:8765"
     volumes:
@@ -34,8 +36,29 @@ services:
     #   - telegram_bot_token
     #   - api_bearer_token
 
+  # Optional public HTTPS door with Basic Auth. Only starts if ./Caddyfile exists
+  # (copy Caddyfile.example -> Caddyfile and drop in a real password hash).
+  caddy:
+    image: caddy:2
+    container_name: cryptobot-caddy
+    restart: unless-stopped
+    profiles: ["proxy"]
+    depends_on:
+      - cryptobot
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    security_opt:
+      - no-new-privileges:true
+
 volumes:
   cryptobot_data:
+  caddy_data:
+  caddy_config:
 
 # secrets:
 #   binance_api_keys:

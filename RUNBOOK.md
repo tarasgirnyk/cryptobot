@@ -184,12 +184,30 @@ nano .env        # AUTOMATION_MODE, ключі бірж, Telegram, API_BEARER_TO
 `secrets:` у `compose.yaml` і поклади файли в `/opt/cryptobot/secrets/` (у
 `.gitignore`), тоді в `.env` лиши тільки `*_FILE`-змінні.
 
-Доступ до панелі з ноутбука:
+Доступ до панелі з ноутбука (SSH-тунель, нічого не відкриваючи назовні):
 
 ```bash
-ssh -N -L 8765:127.0.0.1:8765 user@server
-# → http://127.0.0.1:8765
+ssh -N -L 8771:127.0.0.1:8771 user@server
+# → http://127.0.0.1:8771
 ```
+
+### Публічний HTTPS + логін/пароль (Caddy)
+
+Якщо треба відкрити панель на зовнішню IP:
+
+```bash
+cp Caddyfile.example Caddyfile
+docker run --rm caddy caddy hash-password --plaintext 'ПАРОЛЬ'   # -> $2a$... хеш
+# вставити хеш у Caddyfile замість REPLACE_WITH_BCRYPT_HASH, за потреби
+# замінити 91.245.76.78 на свою IP/домен
+ufw allow 80/tcp && ufw allow 443/tcp     # якщо ufw активний
+./deploy.sh                                # підхопить Caddyfile і підніме проксі
+```
+
+Далі `https://<ip>/` → браузер один раз попередить про self-signed сертифікат
+(внутрішній CA Caddy) → логін. Cryptobot лишається на `127.0.0.1`, Caddy —
+єдині відкриті порти. З реальним доменом заміни `tls internal` на `tls you@mail`
+для Let's Encrypt без попередження.
 
 Логи і стан:
 
