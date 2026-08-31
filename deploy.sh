@@ -17,7 +17,6 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 BRANCH="${CRYPTOBOT_BRANCH:-main}"
-PORT="${CRYPTBOT_PUBLIC_PORT:-8765}"
 
 echo "==> git fetch && reset --hard origin/${BRANCH}"
 git fetch --prune origin
@@ -28,6 +27,10 @@ if [[ ! -f .env ]]; then
   echo "!! .env не знайдено. Створи його з .env.example і запусти знову." >&2
   exit 1
 fi
+
+# Порт панелі, який публікує compose (той самий дефолт, що в compose.yaml).
+PORT="$(sed -n 's/^CRYPTBOT_PUBLIC_PORT=\([0-9]\+\).*/\1/p' .env | head -1)"
+PORT="${PORT:-8765}"
 
 echo "==> docker compose up -d --build"
 docker compose up -d --build
