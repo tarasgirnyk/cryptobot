@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CryptoBOT — арбітражний сканер</title>
+  <style>
+    :root{color-scheme:dark;--bg:#071018;--panel:#0d1822;--line:#203140;--muted:#8fa3b5;--green:#55e6a5;--red:#ff7185;--amber:#ffc857}
+    *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 20% 0,#10283a 0,#071018 38%);font:14px system-ui;color:#e8f0f6}
+    main{max-width:1280px;margin:auto;padding:28px}.top{display:flex;justify-content:space-between;gap:20px;align-items:flex-end}.brand h1{margin:0;font-size:27px}.brand p{color:var(--muted);margin:6px 0 0}.badge{border:1px solid #28543f;background:#10271d;color:var(--green);padding:7px 11px;border-radius:999px}
+    .controls,.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:22px 0}.card{background:rgba(13,24,34,.92);border:1px solid var(--line);border-radius:13px;padding:14px}.card label{display:block;color:var(--muted);font-size:12px;margin-bottom:7px}.card input{width:100%;background:#08121a;color:white;border:1px solid #2a3d4d;border-radius:8px;padding:9px}.value{font-size:22px;font-weight:700}.value.green{color:var(--green)}
+    .notice{border-left:3px solid var(--amber);background:#211d10;padding:11px 14px;margin-bottom:15px;color:#f7dfa1}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:13px;background:rgba(13,24,34,.94)}table{border-collapse:collapse;width:100%;min-width:1100px}th,td{padding:11px 12px;border-bottom:1px solid #172735;text-align:right;white-space:nowrap}th{position:sticky;top:0;background:#101e2a;color:#91aabd;font-size:12px}th:first-child,td:first-child{text-align:left}.long{color:#6bc9ff}.short{color:#ff9aab}.positive{color:var(--green);font-weight:700}.negative{color:var(--red);font-weight:700}.warn{color:var(--amber)}button{background:#17364a;color:white;border:1px solid #2d5872;border-radius:8px;padding:7px 10px;cursor:pointer}button:hover{background:#214b65}.empty{text-align:center!important;color:var(--muted);padding:42px!important}.foot{color:var(--muted);margin-top:14px;font-size:12px}.panels{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-top:16px}.panel{background:rgba(13,24,34,.94);border:1px solid var(--line);border-radius:13px;padding:15px;min-height:180px}.panel h2{font-size:16px;margin:0 0 12px}.panel-content{color:var(--muted)}.paper-row{display:grid;grid-template-columns:1fr auto;gap:10px;padding:10px 0;border-bottom:1px solid #1c2c39}.paper-row small{color:var(--muted)}.spark{display:flex;align-items:flex-end;height:95px;gap:2px;margin-top:12px}.spark i{flex:1;min-width:2px;background:#46b98a;border-radius:2px 2px 0 0}.actions{display:flex;gap:6px;justify-content:flex-end}@media(max-width:800px){.controls,.stats,.panels{grid-template-columns:1fr 1fr}.top{align-items:flex-start;flex-direction:column}.panels{grid-template-columns:1fr}}
+  </style>
+</head>
+<body><main>
+  <div class="top"><div class="brand"><h1>CryptoBOT Scanner</h1><p>Binance · Bybit · BingX · MEXC · без ключів · без реальних ордерів</p></div><div class="badge" id="status">Підключення…</div></div>
+  <section class="controls">
+    <div class="card"><label>Мін. чистий спред, %</label><input id="minSpread" type="number" value="0.25" step="0.05"></div>
+    <div class="card"><label>Мін. оборот на кожній біржі, USDT</label><input id="minVolume" type="number" value="1000000" step="100000"></div>
+    <div class="card"><label>Комісія одного ордера, %</label><input id="fee" type="number" value="0.055" step="0.005"></div>
+    <div class="card"><label>Умовний депозит для симуляції, USDT</label><input id="deposit" type="number" value="2000" step="100"></div>
+  </section>
+  <section class="stats">
+    <div class="card"><label>Знайдено зв’язок</label><div class="value" id="count">—</div></div>
+    <div class="card"><label>Найкращий чистий спред</label><div class="value green" id="best">—</div></div>
+    <div class="card"><label>Оціночний результат*</label><div class="value" id="profit">—</div></div>
+    <div class="card"><label>Оновлено</label><div class="value" id="updated">—</div></div>
+  </section>
+  <div class="notice">Це сканер і симулятор. Аналіз стакана запускається окремо для вибраної монети, але затримка між двома біржами та реальне виконання ордерів не моделюються — тому термінал поки не призначений для реальних грошей.</div>
+  <div class="table-wrap"><table><thead><tr><th>Монета</th><th>LONG</th><th>SHORT</th><th>Gross</th><th>Комісії</th><th>Фандінг</th><th>Net</th><th>Мін. оборот 24h</th><th>Симуляція*</th><th>Дії</th></tr></thead><tbody id="rows"><tr><td class="empty" colspan="10">Завантаження ринкових даних…</td></tr></tbody></table></div>
+  <section class="panels">
+    <div class="panel"><h2>Стакан та історія <span id="selectedSymbol"></span></h2><div class="panel-content" id="analysis">Натисніть «Аналіз» біля потрібної монети.</div></div>
+    <div class="panel"><h2>Paper trading</h2><div class="panel-content" id="paper">Відкритих віртуальних позицій немає.</div></div>
+  </section>
+  <div class="foot">* Спрощена оцінка: депозит × чистий спред. Це не прогноз прибутку. Для реального виконання потрібні стакани, синхронне відкриття двох ніг, контроль маржі та аварійне закриття.</div>
+</main><script>
+const $=id=>document.getElementById(id); let timer;
+const money=n=>new Intl.NumberFormat('uk-UA',{maximumFractionDigits:0}).format(n);
+const pct=n=>`${n>=0?'+':''}${n.toFixed(3)}%`;
+// Якщо панель за reverse proxy з токеном: у devtools один раз localStorage.setItem('apiToken','...')
+const postHeaders=()=>{const h={'Content-Type':'application/json'};const t=localStorage.getItem('apiToken');if(t)h['Authorization']='Bearer '+t;return h};
+async function refresh(){
+  try{
+    $('status').textContent='Оновлення…';
+    const fee=Number($('fee').value)||0;
+    const res=await fetch(`/api/opportunities?fee=${fee}`,{cache:'no-store'}); const data=await res.json();
+    const minSpread=Number($('minSpread').value)||0, minVolume=Number($('minVolume').value)||0, deposit=Number($('deposit').value)||0;
+    const rows=data.opportunities.filter(x=>x.netSpreadPct>=minSpread&&x.minTurnover24h>=minVolume);
+    $('count').textContent=rows.length; $('best').textContent=rows.length?pct(rows[0].netSpreadPct):'—';
+    $('profit').textContent=rows.length?`${(deposit*rows[0].netSpreadPct/100).toFixed(2)} USDT`:'—';
+    $('updated').textContent=new Date(data.generatedAt).toLocaleTimeString('uk-UA');
+    $('status').textContent=data.errors.length?'Частина API недоступна':'Публічні дані онлайн';
+    $('rows').innerHTML=rows.length?rows.slice(0,100).map(x=>`<tr><td><b>${x.symbol.replace('USDT','')}</b>${x.warning?' <span class="warn">⚠</span>':''}</td><td class="long">${x.longExchange}<br>${x.longAsk}</td><td class="short">${x.shortExchange}<br>${x.shortBid}</td><td>${pct(x.grossSpreadPct)}</td><td class="negative">-${x.roundTripFeesPct.toFixed(3)}%</td><td class="${x.fundingEffectPct>=0?'positive':'negative'}">${pct(x.fundingEffectPct)}</td><td class="${x.netSpreadPct>=0?'positive':'negative'}">${pct(x.netSpreadPct)}</td><td>${money(x.minTurnover24h)}</td><td>${(deposit*x.netSpreadPct/100).toFixed(2)} USDT</td><td><div class="actions"><button onclick="analyze('${x.symbol}')">Аналіз</button><button onclick="paperOpen('${x.symbol}')">Paper</button></div></td></tr>`).join(''):'<tr><td class="empty" colspan="10">За заданими фільтрами зв’язок немає</td></tr>';
+    await loadPaper();
+  }catch(e){$('status').textContent='Помилка з’єднання';$('rows').innerHTML=`<tr><td class="empty" colspan="10">${e.message}</td></tr>`}
+}
+async function analyze(symbol){
+  $('selectedSymbol').textContent=`— ${symbol}`;$('analysis').textContent='Завантаження стаканів…';
+  try{
+    const notional=Math.max(10,Number($('deposit').value)||1000);
+    const [depth,history]=await Promise.all([fetch(`/api/depth?symbol=${symbol}&notional=${notional}`).then(r=>r.json()),fetch(`/api/history?symbol=${symbol}`).then(r=>r.json())]);
+    if(depth.error)throw new Error(depth.error);
+    const points=history.points||[], values=points.map(x=>x.net), min=Math.min(...values,0), max=Math.max(...values,1), bars=points.slice(-80).map(x=>`<i title="${pct(x.net)}" style="height:${10+80*(x.net-min)/(max-min||1)}%"></i>`).join('');
+    $('analysis').innerHTML=`<div>Обсяг перевірки: <b>${money(depth.notional)} USDT</b></div><div>Виконуваний спред за VWAP: <b class="${depth.executableSpreadPct>=0?'positive':'negative'}">${pct(depth.executableSpreadPct)}</b></div><div>Оцінене прослизання: <b class="negative">${depth.slippagePct.toFixed(3)}%</b></div><div>Заповнення LONG / SHORT: <b>${depth.longFillPct.toFixed(0)}% / ${depth.shortFillPct.toFixed(0)}%</b></div><div class="spark">${bars||'<span>Історія накопичиться під час роботи сканера.</span>'}</div>`;
+  }catch(e){$('analysis').innerHTML=`<span class="negative">${e.message}</span>`}
+}
+async function paperOpen(symbol){
+  const notional=Math.max(10,Number($('deposit').value)||1000);
+  const r=await fetch('/api/paper/open',{method:'POST',headers:postHeaders(),body:JSON.stringify({symbol,notional})});const data=await r.json();
+  if(data.error)alert(data.error);await loadPaper();
+}
+async function paperClose(id){await fetch('/api/paper/close',{method:'POST',headers:postHeaders(),body:JSON.stringify({id})});await loadPaper()}
+async function loadPaper(){
+  try{const data=await fetch('/api/paper').then(r=>r.json());$('paper').innerHTML=data.open.length?data.open.map(x=>`<div class="paper-row"><div><b>${x.symbol}</b> · ${x.longExchange} / ${x.shortExchange}<br><small>${money(x.notional)} USDT · вхід ${pct(x.entryGrossPct)} · зараз ${pct(x.currentGrossPct||0)}</small><br><span class="${x.unrealizedPnl>=0?'positive':'negative'}">${x.unrealizedPnl>=0?'+':''}${x.unrealizedPnl.toFixed(2)} USDT</span></div><button onclick="paperClose('${x.id}')">Закрити</button></div>`).join(''):'Відкритих віртуальних позицій немає.'}catch(e){}
+}
+document.querySelectorAll('input').forEach(x=>x.addEventListener('change',refresh)); refresh(); timer=setInterval(refresh,5000);
+</script></body></html>
