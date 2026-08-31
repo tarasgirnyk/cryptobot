@@ -161,6 +161,47 @@ API_BEARER_TOKEN=<якщо панель за проксі>
 | Ринкові дані впали | входи блокуються автоматично; виходи по відкритих позиціях працюють |
 | Зникло `execution.active` | бракує ключів або `load_markets` впав; дивись `audit_events` kind `executor_exchange_failed` |
 
+## Деплой на сервер (Docker)
+
+Потрібен Linux-сервер із Docker + docker compose. Панель слухає лише
+`127.0.0.1` — назовні тільки через SSH-тунель або reverse proxy з авторизацією.
+
+Перший раз:
+
+```bash
+sudo mkdir -p /opt/cryptobot && sudo chown "$USER" /opt/cryptobot
+git clone https://github.com/tarasgirnyk/cryptobot.git /opt/cryptobot
+cd /opt/cryptobot
+cp .env.example .env
+nano .env        # AUTOMATION_MODE, ключі бірж, Telegram, API_BEARER_TOKEN
+./deploy.sh
+```
+
+`deploy.sh` робить `git reset --hard origin/main`, `docker compose up -d --build`
+і чекає `/api/health`. Оновлення — просто `cd /opt/cryptobot && ./deploy.sh`.
+
+Секрети: або в `.env` (chmod 600, не в git), або через Docker secrets — розкоментуй
+`secrets:` у `compose.yaml` і поклади файли в `/opt/cryptobot/secrets/` (у
+`.gitignore`), тоді в `.env` лиши тільки `*_FILE`-змінні.
+
+Доступ до панелі з ноутбука:
+
+```bash
+ssh -N -L 8765:127.0.0.1:8765 user@server
+# → http://127.0.0.1:8765
+```
+
+Логи і стан:
+
+```bash
+docker compose -f /opt/cryptobot/compose.yaml logs -f cryptobot
+docker compose -f /opt/cryptobot/compose.yaml ps
+```
+
+Дані (`data/cryptobot.db`) живуть у Docker volume `cryptobot_data` і переживають
+`deploy.sh`. Аварійна зупинка: `docker compose down` (позиції в demo/live це НЕ
+закриває — спершу `/stop` у Telegram).
+
 ## Обмеження цієї версії
 
 - Ордери лише `market`, вихід теж `market`.
