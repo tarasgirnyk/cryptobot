@@ -52,7 +52,7 @@ class RiskFilterTests(unittest.TestCase):
         )
         self.assertIsNone(risk.candidate_rejection_reason(row, depth=good_depth))
 
-    def test_small_order_skips_depth_fill_and_slippage_gates(self):
+    def test_small_order_keeps_depth_and_execution_gates(self):
         row = candidate(netSpreadPct=0.70)
         thin_depth = {
             "longFillPct": 40,
@@ -64,8 +64,21 @@ class RiskFilterTests(unittest.TestCase):
             risk.candidate_rejection_reason(row, depth=thin_depth, notional=5000),
             "depth_fill",
         )
-        self.assertIsNone(
-            risk.candidate_rejection_reason(row, depth=thin_depth, notional=500)
+        self.assertEqual(
+            risk.candidate_rejection_reason(row, depth=thin_depth, notional=500),
+            "depth_fill",
+        )
+
+        filled_but_negative = {
+            **thin_depth,
+            "longFillPct": 100,
+            "shortFillPct": 100,
+        }
+        self.assertEqual(
+            risk.candidate_rejection_reason(
+                row, depth=filled_but_negative, notional=20
+            ),
+            "slippage",
         )
 
     def test_same_route_concentration_is_limited(self):

@@ -70,8 +70,8 @@ MAX_SLIPPAGE_PCT = float(os.getenv("MAX_SLIPPAGE_PCT", "0.15"))
 MAX_PRICE_DEVIATION_PCT = float(os.getenv("MAX_PRICE_DEVIATION_PCT", "10"))
 SYMBOL_COOLDOWN_SEC = int(os.getenv("SYMBOL_COOLDOWN_SEC", "1800"))
 
-# Нижче цього номіналу перевірки стакана (заповнення/прослизання) не
-# застосовуються — на $500–1000 глибина рідко є вузьким місцем.
+# Збережено для сумісності конфігурації. Execution-фільтри стакана тепер
+# застосовуються за будь-якого номіналу; малий ордер теж може виконатись частково.
 DEPTH_GATE_MIN_NOTIONAL = float(os.getenv("DEPTH_GATE_MIN_NOTIONAL", "2000"))
 
 # --- Модель фандінгу -------------------------------------------------------

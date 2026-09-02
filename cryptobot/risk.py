@@ -49,13 +49,9 @@ def candidate_rejection_reason(candidate, opened=(), depth=None, now=None, notio
         return "cooldown"
     if depth is None:
         return None
-    # На малому номіналі глибина стакана рідко є вузьким місцем — лишаємо тільки
-    # захист від фактично порожнього стакана.
-    small_order = notional is not None and notional < config.DEPTH_GATE_MIN_NOTIONAL
-    if small_order:
-        if depth["longFillPct"] <= 0 or depth["shortFillPct"] <= 0:
-            return "depth_empty"
-        return None
+    # Розмір ордера не є підставою пропускати execution-фільтри. Навіть малий
+    # ордер на тонкому або некоректно нормалізованому стакані може мати часткове
+    # виконання чи від'ємний executable spread, що особливо небезпечно в live.
     if depth["longFillPct"] < 99.5 or depth["shortFillPct"] < 99.5:
         return "depth_fill"
     if depth["slippagePct"] > config.MAX_SLIPPAGE_PCT:
