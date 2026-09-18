@@ -4,8 +4,9 @@ from cryptobot.exchanges import (
     AccountPool,
     CcxtExchangeClient,
     ExchangeOpError,
-    MexcStubClient,
+    MexcExchangeClient,
     NotSupported,
+    OrderRejected,
     build_client,
 )
 from cryptobot.exchanges.accounts import _parse_pairs
@@ -30,7 +31,7 @@ class FakeCcxt:
         return round(float(amount), 3)
 
     def set_leverage(self, leverage, symbol, params=None):
-        self.calls.append(("set_leverage", leverage, symbol))
+        self.calls.append(("set_leverage", leverage, symbol, params))
         if "set_leverage_error" in self._overrides:
             raise self._overrides["set_leverage_error"]
 
@@ -145,18 +146,50 @@ class CcxtClientTests(unittest.TestCase):
         self.assertEqual(self.client.free_collateral(), 123.4)
 
 
-class MexcStubTests(unittest.TestCase):
-    def test_all_trading_methods_raise(self):
-        stub = MexcStubClient()
-        for call in (
-            lambda: stub.load(),
-            lambda: stub.set_leverage("BTCUSDT", 10),
-            lambda: stub.market_order("BTCUSDT", "buy", 1, "c"),
-            lambda: stub.position("BTCUSDT"),
-            lambda: stub.free_collateral(),
-        ):
-            with self.assertRaises(NotSupported):
-                call()
+class MexcClientTests(unittest.TestCase):
+    def setUp(self):
+        self.fake = FakeCcxt()
+        self.fake.markets["BTC/USDT:USDT"] = {
+            "contractSize": 0.0001,
+            "limits": {"amount": {"min": 1}},
+        }
+        self.client = MexcExchangeClient(self.fake)
+
+    def test_notional_is_rounded_to_contracts_and_returned_as_base(self):
+        # 20 USDT / (50,000 * 0.0001) = 4 contracts = 0.0004 BTC.
+        self.assertAlmostEqual(
+            self.client.amount_for_notional("BTCUSDT", 20, 50_000), 0.0004
+        )
+
+    def test_market_order_converts_base_to_contracts_and_fill_back_to_base(self):
+        self.client.set_leverage("BTCUSDT", 3)
+        result = self.client.market_order("BTCUSDT", "buy", 0.0004, "mexc-A")
+        _, _, _, _, amount, params = self.fake.calls[-1]
+        self.assertEqual(amount, 4)
+        self.assertEqual(params["openType"], 1)
+        self.assertEqual(params["leverage"], 3)
+        self.assertAlmostEqual(result.filled_base, 0.0004)
+
+    def test_reduce_only_is_forwarded(self):
+        self.client.set_leverage("BTCUSDT", 3)
+        self.client.market_order("BTCUSDT", "sell", 0.0002, "mexc-C", True)
+        params = self.fake.calls[-1][-1]
+        self.assertTrue(params["reduceOnly"])
+
+    def test_set_leverage_configures_long_and_short(self):
+        self.client.set_leverage("BTCUSDT", 3)
+        calls = [row for row in self.fake.calls if row[0] == "set_leverage"]
+        self.assertEqual([row[3]["positionType"] for row in calls], [1, 2])
+        self.assertTrue(all(row[3]["openType"] == 1 for row in calls))
+
+    def test_below_one_contract_is_rejected(self):
+        self.client.set_leverage("BTCUSDT", 3)
+        with self.assertRaises(OrderRejected):
+            self.client.market_order("BTCUSDT", "buy", 0.00001, "tiny")
+
+    def test_order_requires_leverage_first(self):
+        with self.assertRaises(OrderRejected):
+            self.client.market_order("BTCUSDT", "buy", 0.0002, "no-lev")
 
 
 class AccountPoolTests(unittest.TestCase):
@@ -187,9 +220,6 @@ class AccountPoolTests(unittest.TestCase):
 
 
 class FactoryTests(unittest.TestCase):
-    def test_mexc_returns_stub(self):
-        self.assertIsInstance(build_client("MEXC", None), MexcStubClient)
-
     def test_unknown_exchange_raises(self):
         with self.assertRaises(ValueError):
             build_client("Kraken", None)
@@ -197,6 +227,8 @@ class FactoryTests(unittest.TestCase):
     def test_missing_account_raises(self):
         with self.assertRaises(ValueError):
             build_client("Binance", None)
+        with self.assertRaises(ValueError):
+            build_client("MEXC", None)
 
 
 if __name__ == "__main__":

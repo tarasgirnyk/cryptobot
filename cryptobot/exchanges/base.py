@@ -227,18 +227,106 @@ class CcxtExchangeClient(ExchangeClient):
             return int(time.time() * 1000)
 
 
-class MexcStubClient(ExchangeClient):
-    """MEXC futures API недоступний користувачу — усі торгові виклики падають."""
+class MexcExchangeClient(CcxtExchangeClient):
+    """MEXC USDT-M adapter.
 
-    def __init__(self, name: str = "MEXC"):
-        self.name = name
+    CCXT accepts and returns MEXC swap amounts in contracts, while the execution
+    engine deliberately works in base-asset units.  Keep that conversion at the
+    exchange boundary so cross-exchange fill comparisons remain meaningful.
+    """
 
-    def _no(self, *_a, **_k):
-        raise NotSupported("MEXC futures API не підключено (немає ключів)")
+    def __init__(self, exchange: Any):
+        super().__init__("MEXC", exchange)
+        self._leverage_by_symbol: dict[str, int] = {}
 
-    load = has_market = unified = _no
-    set_leverage = amount_for_notional = market_order = _no
-    fetch_order_result = position = free_collateral = cancel_all = server_time_ms = _no
+    def _contract_size(self, symbol: str) -> float:
+        size = float(self.market(symbol).get("contractSize") or 0)
+        if size <= 0:
+            raise NotSupported(f"MEXC {symbol}: некоректний contractSize={size}")
+        return size
+
+    def _contracts(self, symbol: str, base_qty: float) -> float:
+        unified = self.unified(symbol)
+        contracts = float(self.ccxt.amount_to_precision(
+            unified, abs(float(base_qty)) / self._contract_size(symbol)
+        ))
+        minimum = float(((self.market(symbol).get("limits") or {}).get("amount") or {}).get("min") or 0)
+        if contracts <= 0 or (minimum and contracts < minimum):
+            raise OrderRejected(
+                f"MEXC {symbol}: обсяг {base_qty:g} бази менший за мінімум {minimum:g} контрактів"
+            )
+        return contracts
+
+    def amount_for_notional(self, symbol: str, notional_usdt: float, price: float) -> float:
+        if price <= 0:
+            raise OrderRejected("Ціна для розрахунку обсягу має бути > 0")
+        unified = self.unified(symbol)
+        size = self._contract_size(symbol)
+        raw_contracts = notional_usdt / (price * size)
+        contracts = float(self.ccxt.amount_to_precision(unified, raw_contracts))
+        minimum = float(((self.market(symbol).get("limits") or {}).get("amount") or {}).get("min") or 0)
+        contracts = max(contracts, minimum)
+        if contracts <= 0:
+            raise OrderRejected(f"MEXC {symbol}: нульовий обсяг після округлення")
+        return contracts * size
+
+    def set_leverage(self, symbol: str, leverage: int) -> None:
+        # MEXC requires a position side when no position exists. Configure both
+        # directions because this client may be either leg of the hedge.
+        errors = []
+        for position_type in (1, 2):  # 1 long, 2 short
+            try:
+                self.ccxt.set_leverage(
+                    int(leverage), self.unified(symbol),
+                    {"openType": 1, "positionType": position_type},
+                )
+            except Exception as exc:  # noqa: BLE001
+                msg = str(exc).lower()
+                if "not modified" in msg or "leverage not changed" in msg:
+                    continue
+                errors.append(exc)
+        if errors:
+            raise _translate(errors[0])
+        self._leverage_by_symbol[symbol] = int(leverage)
+
+    def market_order(
+        self, symbol: str, side: str, base_qty: float, client_id: str,
+        reduce_only: bool = False,
+    ) -> OrderResult:
+        contracts = self._contracts(symbol, base_qty)
+        leverage = self._leverage_by_symbol.get(symbol)
+        if leverage is None:
+            raise OrderRejected(f"MEXC {symbol}: плече не налаштоване перед ордером")
+        params: dict[str, Any] = {
+            "clientOrderId": client_id,
+            "openType": 1,
+            "leverage": leverage,
+        }
+        if reduce_only:
+            params["reduceOnly"] = True
+        try:
+            order = self.ccxt.create_order(
+                self.unified(symbol), "market", side, contracts, None, params
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise _translate(exc)
+        return self._parse_contract_order(order, symbol, side, client_id)
+
+    def fetch_order_result(self, symbol: str, order_id: str) -> OrderResult:
+        try:
+            order = self.ccxt.fetch_order(order_id, self.unified(symbol))
+        except Exception as exc:  # noqa: BLE001
+            raise _translate(exc)
+        return self._parse_contract_order(
+            order, symbol, str(order.get("side") or ""), order.get("clientOrderId")
+        )
+
+    def _parse_contract_order(
+        self, order: dict, symbol: str, side: str, client_id: str | None
+    ) -> OrderResult:
+        result = _parse_order(order, symbol, side, client_id)
+        result.filled_base *= self._contract_size(symbol)
+        return result
 
 
 # --- ccxt helpers --------------------------------------------------------

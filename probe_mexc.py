@@ -19,7 +19,7 @@ if os.environ.get("FORCE_IPV4", "1") != "0":
 
 import ccxt
 
-ROOT = Path(r"C:\Users\pc1\Documents\CryptoBOT")
+ROOT = Path(__file__).resolve().parent
 SYMBOL   = os.getenv("PROBE_SYMBOL", "BTC/USDT:USDT")
 NOTIONAL = float(os.getenv("PROBE_NOTIONAL_USDT", "6"))
 LEVERAGE = int(os.getenv("PROBE_LEVERAGE", "3"))
@@ -43,8 +43,8 @@ def load_env(path: Path) -> dict:
     return env
 
 
-env = load_env(ROOT / ".env")
-raw = (env.get("MEXC_API_KEYS") or "").split(",")[0].strip()
+env = load_env(ROOT / ".env") if (ROOT / ".env").exists() else {}
+raw = (os.getenv("MEXC_API_KEYS") or env.get("MEXC_API_KEYS") or "").split(",")[0].strip()
 if ":" not in raw:
     die("MEXC_API_KEYS немає у .env")
 key, secret = (p.strip() for p in raw.split(":", 1))

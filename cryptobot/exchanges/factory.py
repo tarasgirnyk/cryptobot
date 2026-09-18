@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from cryptobot.exchanges.accounts import Account
-from cryptobot.exchanges.base import CcxtExchangeClient, ExchangeClient, MexcStubClient
+from cryptobot.exchanges.base import CcxtExchangeClient, ExchangeClient, MexcExchangeClient
 
 
 # внутрішня назва -> ccxt id (USD-M / linear perpetual)
@@ -11,6 +11,7 @@ _CCXT_ID = {
     "Binance": "binanceusdm",
     "Bybit": "bybit",
     "BingX": "bingx",
+    "MEXC": "mexc",
 }
 
 
@@ -21,8 +22,6 @@ def build_client(
     sandbox: bool = True,
     enable_rate_limit: bool = True,
 ) -> ExchangeClient:
-    if exchange == "MEXC":
-        return MexcStubClient()
     if exchange not in _CCXT_ID:
         raise ValueError(f"Непідтримувана біржа для виконання: {exchange}")
     if account is None:
@@ -41,4 +40,6 @@ def build_client(
     )
     if sandbox:
         instance.set_sandbox_mode(True)
+    if exchange == "MEXC":
+        return MexcExchangeClient(instance)
     return CcxtExchangeClient(exchange, instance)

@@ -104,7 +104,7 @@ EXECUTION_ENABLED_EXCHANGES = tuple(
     if name in {
         value.strip()
         for value in os.getenv(
-            "EXECUTION_ENABLED_EXCHANGES", "Binance,Bybit,BingX"
+            "EXECUTION_ENABLED_EXCHANGES", "Binance,Bybit,BingX,MEXC"
         ).split(",")
         if value.strip()
     }

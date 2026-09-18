@@ -6,7 +6,6 @@ import threading
 
 from cryptobot import config
 from cryptobot.exchanges import AccountPool, build_client
-from cryptobot.exchanges.base import MexcStubClient
 from cryptobot.risk import RiskEngine
 from cryptobot.storage import audit
 
@@ -22,9 +21,6 @@ def _build() -> dict:
     _pool = AccountPool.from_env()
     built: dict = {}
     for name in config.EXECUTION_ENABLED_EXCHANGES:
-        if name == "MEXC":
-            audit("executor_exchange_skipped", {"exchange": name, "reason": "futures API stub"})
-            continue
         if not _pool.has(name):
             audit("executor_exchange_skipped", {"exchange": name, "reason": "no API keys"})
             continue
