@@ -120,7 +120,8 @@ print(f"\n>>> OPEN {SIDE} {amount} {SYMBOL} (market)  cid={cid_open}")
 opened = None
 try:
     opened = ex.create_order(SYMBOL, "market", SIDE, amount, None,
-                             {"clientOrderId": cid_open, "openType": 1})
+                             {"clientOrderId": cid_open, "openType": 1,
+                              "leverage": LEVERAGE})
     print(f"    id={opened.get('id')}  status={opened.get('status')}  "
           f"filled={opened.get('filled')}  avg={opened.get('average') or opened.get('price')}")
 except Exception as e:
@@ -147,8 +148,10 @@ cid_close = "probe-" + uuid.uuid4().hex[:16]
 print(f"\n>>> CLOSE {CLOSE_SIDE} {pos_contracts} {SYMBOL} reduce_only  cid={cid_close}")
 closed = None
 for attempt, params in enumerate((
-    {"clientOrderId": cid_close, "reduceOnly": True, "openType": 1},
-    {"clientOrderId": cid_close + "b", "reduceOnly": True},
+    {"clientOrderId": cid_close, "reduceOnly": True, "openType": 1,
+     "leverage": LEVERAGE},
+    {"clientOrderId": cid_close + "b", "reduceOnly": True, "openType": 1,
+     "leverage": LEVERAGE},
     {"clientOrderId": cid_close + "c"},
 ), 1):
     try:
