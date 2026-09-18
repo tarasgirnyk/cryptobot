@@ -9,6 +9,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 from cryptobot import config, runtime
 from cryptobot.automation import automation_loop
+from cryptobot.balances import balance_snapshot
 from cryptobot.depth import depth_analysis
 from cryptobot.paper import close_paper, market_health, open_paper, paper_metrics, paper_snapshot
 from cryptobot.risk import candidate_rejection_reason
@@ -55,6 +56,9 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json(paper_metrics())
         if parsed.path == "/api/live":
             return self.send_json(_live_snapshot())
+        if parsed.path == "/api/balances":
+            force = params.get("refresh", [""])[0].lower() in {"1", "true", "yes"}
+            return self.send_json(balance_snapshot(force=force))
         if parsed.path == "/api/history":
             symbol = params.get("symbol", [""])[0].upper()
             with history_lock:

@@ -108,6 +108,9 @@ class ExchangeClient:
     def free_collateral(self) -> float:
         raise NotImplementedError
 
+    def usdt_balance(self) -> dict:
+        raise NotImplementedError
+
     def cancel_all(self, symbol: str) -> None:
         raise NotImplementedError
 
@@ -207,12 +210,20 @@ class CcxtExchangeClient(ExchangeClient):
         return None
 
     def free_collateral(self) -> float:
+        return self.usdt_balance()["free"]
+
+    def usdt_balance(self) -> dict:
         try:
             balance = self.ccxt.fetch_balance()
         except Exception as exc:  # noqa: BLE001
             raise _translate(exc)
         usdt = balance.get("USDT") or {}
-        return float(usdt.get("free") or 0)
+        return {
+            "free": float(usdt.get("free") or 0),
+            "used": float(usdt.get("used") or 0),
+            "total": float(usdt.get("total") or 0),
+            "currency": "USDT",
+        }
 
     def cancel_all(self, symbol: str) -> None:
         try:
