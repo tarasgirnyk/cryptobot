@@ -73,6 +73,28 @@ def _flatten_leg(client, symbol, side, qty, client_id):
         return exc
 
 
+def _confirm_flattened(client, symbol, result, deadline) -> bool:
+    """Підтверджує аварійне закриття за ордером і фактичною позицією.
+
+    Деякі біржі (зокрема Bybit) повертають market-ордер зі статусом
+    ``unknown`` одразу після прийняття. Тому не можна вважати recovery
+    невдалим або успішним лише за первинною відповіддю create_order.
+    """
+    resolved = _safe_resolve(client, symbol, result, deadline)
+    order_filled = isinstance(resolved, OrderResult) and resolved.is_filled
+    while time.time() < deadline:
+        try:
+            residual = client.position(symbol)
+            if not residual or abs(residual.base_qty) <= 0:
+                return order_filled
+        except ExchangeOpError:
+            # Якщо позицію звірити не вдалося, покладаємось лише на
+            # підтверджений фінальний fill ордера.
+            return order_filled
+        time.sleep(0.5)
+    return False
+
+
 # --- open --------------------------------------------------------------
 def open_hedge(plan, clients: dict, risk_engine) -> dict:
     """Відкриває хедж LONG/SHORT. Повертає позицію (HEDGED, RECOVERY або FAILED)."""
@@ -158,7 +180,9 @@ def open_hedge(plan, clients: dict, risk_engine) -> dict:
         qty = long_fill if filled_side == "long" else short_fill
         state.set_state(position, RECOVERY, note=f"one-legged fill on {filled_side}")
         flat = _flatten_leg(filled_client, symbol, filled_side_word, qty, f"{position['clientPrefix']}R")
-        ok = isinstance(flat, OrderResult) and flat.is_filled
+        ok = _confirm_flattened(
+            filled_client, symbol, flat, time.time() + config.ORDER_TIMEOUT_SEC
+        )
         _finish(position, FAILED if not ok else RECOVERY, note="recovered one-legged fill")
         audit("live_recovery", {"id": position["id"], "side": filled_side, "qty": qty, "flattened": ok})
         _alert(

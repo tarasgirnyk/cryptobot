@@ -74,7 +74,7 @@ class FakeClient:
         )
 
     def fetch_order_result(self, symbol, order_id):
-        return OrderResult(order_id, None, symbol, "", "closed", 0.0, self.price, {})
+        return OrderResult(order_id, None, symbol, "", "closed", 1.0, self.price, {})
 
     def position(self, symbol):
         return self._position
@@ -144,6 +144,24 @@ class OpenHedgeTests(_Base):
         self.assertIn(pos["state"], (state.RECOVERY, state.FAILED))
         self.assertNotIn(pos["id"], runtime.live_positions)
         self.assertTrue(any(o["reduce_only"] for o in clients["Binance"].orders))
+
+    def test_recovery_resolves_exchange_pending_close(self):
+        clients = self._clients(short={"fill": "zero"})
+        original = clients["Binance"].market_order
+
+        def pending_reduce_only(symbol, side, qty, client_id, reduce_only=False):
+            if reduce_only:
+                clients["Binance"].orders.append(
+                    dict(side=side, qty=qty, client_id=client_id, reduce_only=True)
+                )
+                return OrderResult(
+                    "pending-close", client_id, symbol, side, "unknown", 0.0, 0.0, {}
+                )
+            return original(symbol, side, qty, client_id, reduce_only)
+
+        clients["Binance"].market_order = pending_reduce_only
+        pos = engine.open_hedge(make_plan(), clients, RiskEngine())
+        self.assertEqual(pos["state"], state.RECOVERY)
 
     def test_partial_mismatch_rebalances(self):
         clients = self._clients(short={"fill": 0.8})
