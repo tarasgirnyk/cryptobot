@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from cryptobot import config
 from cryptobot.exchanges import AccountPool, build_client
@@ -13,6 +14,18 @@ _lock = threading.Lock()
 _cache: dict = {"updatedAt": None, "exchanges": []}
 _cache_at = 0.0
 _CACHE_SECONDS = 30
+
+
+def _exchange_balance(name: str, pool: AccountPool) -> dict:
+    if not pool.has(name):
+        return {"exchange": name, "connected": False, "error": "API-ключ не заданий"}
+    try:
+        client = build_client(name, pool.active(name), sandbox=False)
+        client.load()
+        wallet = client.usdt_balance()
+        return {"exchange": name, "connected": True, **wallet}
+    except Exception as exc:  # noqa: BLE001 - one exchange must not hide the others
+        return {"exchange": name, "connected": False, "error": str(exc)[:180]}
 
 
 def balance_snapshot(*, force: bool = False) -> dict:
@@ -27,22 +40,8 @@ def balance_snapshot(*, force: bool = False) -> dict:
             return _cache
 
         pool = AccountPool.from_env()
-        rows = []
-        for name in config.SUPPORTED_EXCHANGES:
-            if not pool.has(name):
-                rows.append({"exchange": name, "connected": False, "error": "API-ключ не заданий"})
-                continue
-            try:
-                client = build_client(name, pool.active(name), sandbox=False)
-                client.load()
-                wallet = client.usdt_balance()
-                rows.append({"exchange": name, "connected": True, **wallet})
-            except Exception as exc:  # noqa: BLE001 - one exchange must not hide the others
-                rows.append({
-                    "exchange": name,
-                    "connected": False,
-                    "error": str(exc)[:180],
-                })
+        with ThreadPoolExecutor(max_workers=len(config.SUPPORTED_EXCHANGES)) as executor:
+            rows = list(executor.map(lambda name: _exchange_balance(name, pool), config.SUPPORTED_EXCHANGES))
 
         _cache_at = time.time()
         _cache = {"updatedAt": int(_cache_at * 1000), "exchanges": rows}
