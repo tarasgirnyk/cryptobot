@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 
 from cryptobot import config
 from cryptobot.exchanges import AccountPool, build_client
@@ -14,6 +14,7 @@ _lock = threading.Lock()
 _cache: dict = {"updatedAt": None, "exchanges": []}
 _cache_at = 0.0
 _CACHE_SECONDS = 30
+_REFRESH_DEADLINE_SECONDS = 15
 
 
 def _exchange_balance(name: str, pool: AccountPool) -> dict:
@@ -40,8 +41,26 @@ def balance_snapshot(*, force: bool = False) -> dict:
             return _cache
 
         pool = AccountPool.from_env()
-        with ThreadPoolExecutor(max_workers=len(config.SUPPORTED_EXCHANGES)) as executor:
-            rows = list(executor.map(lambda name: _exchange_balance(name, pool), config.SUPPORTED_EXCHANGES))
+        executor = ThreadPoolExecutor(max_workers=len(config.SUPPORTED_EXCHANGES))
+        futures = {
+            name: executor.submit(_exchange_balance, name, pool)
+            for name in config.SUPPORTED_EXCHANGES
+        }
+        done, pending = wait(futures.values(), timeout=_REFRESH_DEADLINE_SECONDS)
+        rows = []
+        for name in config.SUPPORTED_EXCHANGES:
+            future = futures[name]
+            if future in done:
+                rows.append(future.result())
+            else:
+                future.cancel()
+                rows.append({
+                    "exchange": name,
+                    "connected": False,
+                    "error": "Біржа не відповіла вчасно — повторіть оновлення",
+                })
+        # Не дозволяємо повільному API затримувати HTTP-відповідь до nginx 504.
+        executor.shutdown(wait=False, cancel_futures=True)
 
         _cache_at = time.time()
         _cache = {"updatedAt": int(_cache_at * 1000), "exchanges": rows}

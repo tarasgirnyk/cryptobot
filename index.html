@@ -63,7 +63,13 @@ async function refresh(){
 async function loadBalances(force=false){
   const button=$('refreshBalances');button.disabled=true;button.textContent='Оновлення…';
   try{
-    const data=await fetch(`/api/balances${force?'?refresh=1':''}`,{cache:'no-store'}).then(r=>r.json());
+    const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),22000);
+    let response;
+    try{response=await fetch(`/api/balances${force?'?refresh=1':''}`,{cache:'no-store',signal:controller.signal})}
+    finally{clearTimeout(timeout)}
+    const type=response.headers.get('content-type')||'';
+    if(!response.ok||!type.includes('application/json'))throw new Error(response.status===504?'Біржі відповідають надто довго. Спробуйте ще раз.':`Сервер повернув помилку ${response.status}`);
+    const data=await response.json();
     $('wallets').innerHTML=data.exchanges.map(x=>`<div class="card wallet ${x.connected?'online':''}"><div class="wallet-name">${x.exchange}<span class="dot"></span></div>${x.connected?`<div class="wallet-balance">${balanceMoney(x.free)} <small>USDT доступно</small></div><div class="wallet-sub">Всього ${balanceMoney(x.total)} · у позиціях ${balanceMoney(x.used)}</div>`:`<div class="wallet-error">${x.error||'Немає з’єднання'}</div>`}</div>`).join('');
     $('walletUpdated').textContent=`Оновлено ${new Date(data.updatedAt).toLocaleTimeString('uk-UA')}`;
   }catch(e){$('wallets').innerHTML=`<div class="card wallet"><div class="wallet-error">Не вдалося отримати баланси: ${e.message}</div></div>`}

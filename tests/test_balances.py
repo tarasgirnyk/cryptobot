@@ -1,4 +1,5 @@
 import unittest
+import time
 from unittest import mock
 
 from cryptobot import balances
@@ -41,6 +42,22 @@ class BalanceSnapshotTests(unittest.TestCase):
         self.assertFalse(rows["MEXC"]["connected"])
         self.assertIn("auth failed", rows["MEXC"]["error"])
         self.assertTrue(all(call.kwargs["sandbox"] is False for call in build.call_args_list))
+
+    @mock.patch.object(balances, "_REFRESH_DEADLINE_SECONDS", 0.01)
+    @mock.patch("cryptobot.balances.build_client")
+    @mock.patch("cryptobot.balances.AccountPool.from_env", return_value=_Pool())
+    def test_slow_exchange_returns_timeout_instead_of_blocking_endpoint(self, _pool, build):
+        client = _Client("Binance")
+        client.usdt_balance = lambda: (time.sleep(0.05) or {
+            "free": 1, "used": 0, "total": 1, "currency": "USDT"
+        })
+        build.return_value = client
+        started = time.monotonic()
+        payload = balances.balance_snapshot(force=True)
+        self.assertLess(time.monotonic() - started, 0.04)
+        rows = {row["exchange"]: row for row in payload["exchanges"]}
+        self.assertFalse(rows["Binance"]["connected"])
+        self.assertIn("не відповіла", rows["Binance"]["error"])
 
 
 if __name__ == "__main__":
