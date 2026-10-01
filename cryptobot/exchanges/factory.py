@@ -30,13 +30,19 @@ def build_client(
     import ccxt  # лінива залежність — core-модулі ccxt не потребують
 
     cls = getattr(ccxt, _CCXT_ID[exchange])
+    options = {"defaultType": "swap"}
+    if exchange == "Bybit":
+        # Private endpoints can spend several seconds behind DNS/TLS/API
+        # latency. Keep the HTTP timeout fail-fast, but give the signed request
+        # a wider validity window and let ccxt compensate for clock skew.
+        options.update({"recvWindow": 20000, "adjustForTimeDifference": True})
     instance = cls(
         {
             "apiKey": account.key,
             "secret": account.secret,
             "enableRateLimit": enable_rate_limit,
             "timeout": 10000,
-            "options": {"defaultType": "swap"},
+            "options": options,
         }
     )
     if sandbox:

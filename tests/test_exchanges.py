@@ -1,4 +1,6 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from cryptobot.exchanges import (
     AccountPool,
@@ -78,6 +80,24 @@ class BaseOfTests(unittest.TestCase):
         self.assertEqual(_base_of("1000PEPEUSDT"), "1000PEPE")
         with self.assertRaises(NotSupported):
             _base_of("BTCUSD")
+
+
+class FactoryOptionsTests(unittest.TestCase):
+    def test_bybit_uses_wider_signed_request_window(self):
+        captured = {}
+
+        def constructor(options):
+            captured.update(options)
+            return FakeCcxt()
+
+        fake_ccxt = SimpleNamespace(bybit=constructor)
+        account = SimpleNamespace(key="key", secret="secret")
+        with patch.dict("sys.modules", {"ccxt": fake_ccxt}):
+            build_client("Bybit", account, sandbox=False)
+
+        self.assertEqual(captured["timeout"], 10000)
+        self.assertEqual(captured["options"]["recvWindow"], 20000)
+        self.assertTrue(captured["options"]["adjustForTimeDifference"])
 
 
 class CcxtClientTests(unittest.TestCase):
