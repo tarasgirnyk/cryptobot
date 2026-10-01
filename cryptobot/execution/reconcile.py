@@ -24,7 +24,8 @@ def startup_reconcile(clients: dict) -> bool:
     """
     mismatches: list[dict] = []
     tracked = state.live_snapshot()
-    tracked_symbols = {row["symbol"] for row in tracked}
+    tracked_symbols = {(row[f"{tag}Exchange"], row["symbol"])
+                       for row in tracked for tag in ("long", "short")}
 
     for pos in tracked:
         if pos.get("state") != HEDGED:
@@ -46,7 +47,7 @@ def startup_reconcile(clients: dict) -> bool:
                                    "reason": f"{exch}: {exc}"})
                 continue
             qty = actual.base_qty if actual else 0.0
-            if not _qty_matches(qty, expected):
+            if not _qty_matches(qty, expected) or (qty > 0) != (tag == "long"):
                 mismatches.append({"id": pos["id"], "symbol": pos["symbol"],
                                    "reason": f"{exch} обсяг {qty} != {expected}"})
 
@@ -56,6 +57,8 @@ def startup_reconcile(clients: dict) -> bool:
             rows = client.ccxt.fetch_positions() if hasattr(client, "ccxt") else []
         except Exception as exc:  # noqa: BLE001
             audit("reconcile_scan_failed", {"exchange": name, "error": str(exc)})
+            mismatches.append({"symbol": "*", "exchange": name,
+                               "reason": "cannot read exchange positions"})
             continue
         for row in rows or []:
             contracts = abs(float(row.get("contracts") or 0))
@@ -64,9 +67,18 @@ def startup_reconcile(clients: dict) -> bool:
             unified = row.get("symbol", "")
             base = unified.split("/")[0]
             internal = f"{base}USDT"
-            if internal not in tracked_symbols:
+            if (name, internal) not in tracked_symbols:
                 mismatches.append({"symbol": internal, "exchange": name,
                                    "reason": "позиція на біржі без запису в БД"})
+        if hasattr(client, "ccxt"):
+            try:
+                client.ccxt.options["warnOnFetchOpenOrdersWithoutSymbol"] = False
+                if client.ccxt.fetch_open_orders():
+                    mismatches.append({"symbol": "*", "exchange": name,
+                                       "reason": "outstanding exchange orders"})
+            except Exception as exc:
+                mismatches.append({"symbol": "*", "exchange": name,
+                                   "reason": "cannot read exchange orders"})
 
     if mismatches:
         audit("reconcile_mismatch", {"items": mismatches})

@@ -49,7 +49,8 @@ class FakeCcxt:
             },
         )
 
-    def fetch_order(self, order_id, symbol):
+    def fetch_order(self, order_id, symbol, params=None):
+        self.calls.append(("fetch_order", order_id, symbol, params))
         return self._overrides.get(
             "fetch_order",
             {"id": order_id, "status": "filled", "filled": 1.0, "average": 50.0, "side": "buy"},
@@ -57,6 +58,9 @@ class FakeCcxt:
 
     def fetch_positions(self, symbols):
         return self._overrides.get("positions", [])
+
+    def fetch_position_mode(self):
+        return {"hedged": self._overrides.get("hedged", False)}
 
     def fetch_balance(self):
         return self._overrides.get("balance", {"USDT": {"free": 123.4}})

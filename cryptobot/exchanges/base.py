@@ -130,6 +130,7 @@ class CcxtExchangeClient(ExchangeClient):
         self.name = name
         self.ccxt = exchange
         self._loaded = False
+        self._hedged: dict[str, bool] = {}
 
     # -- метадані --
     def load(self) -> None:
@@ -151,7 +152,27 @@ class CcxtExchangeClient(ExchangeClient):
     # -- торгівля --
     def set_leverage(self, symbol: str, leverage: int) -> None:
         try:
-            self.ccxt.set_leverage(int(leverage), self.unified(symbol))
+            if self.name in ("BingX", "Binance"):
+                hedged = self.ccxt.fetch_position_mode().get("hedged")
+                if not isinstance(hedged, bool):
+                    raise OrderRejected("Cannot determine position mode")
+                if self.name == "Binance" and hedged:
+                    raise OrderRejected("Binance hedge-mode is not supported by this executor")
+                self._hedged[symbol] = hedged
+            if self.name == "Bybit":
+                rows = self.ccxt.fetch_positions([self.unified(symbol)])
+                if not rows:
+                    raise OrderRejected("Cannot determine Bybit symbol position mode")
+                self._hedged[symbol] = any(
+                    bool(row.get("hedged")) or str((row.get("info") or {}).get("positionIdx", 0)) in ("1", "2")
+                    for row in rows
+                )
+            sides = ("LONG", "SHORT") if self._hedged.get(symbol) else ("BOTH",)
+            if self.name == "BingX":
+                for side in sides:
+                    self.ccxt.set_leverage(int(leverage), self.unified(symbol), {"side": side})
+            else:
+                self.ccxt.set_leverage(int(leverage), self.unified(symbol))
         except Exception as exc:  # noqa: BLE001 - нормалізуємо нижче
             msg = str(exc).lower()
             if "not modified" in msg or "leverage not changed" in msg or "-4046" in msg:
@@ -165,12 +186,45 @@ class CcxtExchangeClient(ExchangeClient):
         precise = self.ccxt.amount_to_precision(self.unified(symbol), raw_amount)
         return float(precise)
 
+    def validate_open(self, symbol: str, qty: float, price: float) -> None:
+        market = self.market(symbol)
+        if not market.get("active") or not market.get("swap") or not market.get("linear"):
+            raise OrderRejected("Market must be active linear perpetual")
+        if float(market.get("contractSize") or 1) != 1:
+            raise OrderRejected("Unsupported contract size for micro-live")
+        precise = float(self.ccxt.amount_to_precision(self.unified(symbol), qty))
+        if abs(precise - qty) > 1e-10:
+            raise OrderRejected("Leg quantity does not match exchange precision")
+        limits = market.get("limits") or {}
+        for kind, value in (("amount", qty), ("market", qty), ("cost", qty * price)):
+            bounds = limits.get(kind) or {}
+            if bounds.get("min") and value < float(bounds["min"]):
+                raise OrderRejected(f"{self.name}: below {kind} minimum")
+            if bounds.get("max") and value > float(bounds["max"]):
+                raise OrderRejected(f"{self.name}: above {kind} maximum")
+
     def market_order(
         self, symbol: str, side: str, base_qty: float, client_id: str, reduce_only: bool = False
     ) -> OrderResult:
         params: dict[str, Any] = {"clientOrderId": client_id}
         if reduce_only:
             params["reduceOnly"] = True
+        if self.name == "BingX":
+            if symbol not in self._hedged:
+                self._hedged[symbol] = self.ccxt.fetch_position_mode()["hedged"]
+            params["hedged"] = self._hedged[symbol]
+        if self.name == "Bybit":
+            if symbol not in self._hedged:
+                rows = self.ccxt.fetch_positions([self.unified(symbol)])
+                if not rows:
+                    raise OrderRejected("Cannot determine Bybit symbol position mode")
+                self._hedged[symbol] = any(
+                    bool(row.get("hedged")) or str((row.get("info") or {}).get("positionIdx", 0)) in ("1", "2")
+                    for row in rows
+                )
+            if self._hedged[symbol]:
+                is_long = (side == "buy") != reduce_only
+                params["positionIdx"] = 1 if is_long else 2
         try:
             order = self.ccxt.create_order(
                 self.unified(symbol), "market", side, base_qty, None, params
@@ -181,7 +235,10 @@ class CcxtExchangeClient(ExchangeClient):
 
     def fetch_order_result(self, symbol: str, order_id: str) -> OrderResult:
         try:
-            order = self.ccxt.fetch_order(order_id, self.unified(symbol))
+            if self.name == "Bybit":
+                order = self.ccxt.fetch_order(order_id, self.unified(symbol), {"acknowledged": True})
+            else:
+                order = self.ccxt.fetch_order(order_id, self.unified(symbol))
         except Exception as exc:  # noqa: BLE001
             raise _translate(exc)
         return _parse_order(order, symbol, order.get("side", ""), order.get("clientOrderId"))

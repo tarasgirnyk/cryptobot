@@ -82,8 +82,13 @@ def handle_telegram_command(message):
         set_control_state(paused=True, kill_switch=True)
         telegram_send("🛑 STOP активовано і збережено. Нові входи заборонено.")
     elif command == "/resetstop":
+        if config.AUTOMATION_MODE in ("demo", "live"):
+            from cryptobot.execution.clients import get_clients
+            from cryptobot.execution.reconcile import startup_reconcile
+            if not startup_reconcile(get_clients()):
+                return
         set_control_state(paused=False, kill_switch=False)
-        telegram_send("▶️ STOP скинуто. Автоматичний paper-режим продовжено.")
+        telegram_send(f"▶️ STOP скинуто. Режим {config.AUTOMATION_MODE} продовжено.")
     elif command == "/positions":
         telegram_send(positions_text() + _live_positions_suffix())
     elif command in {"/report", "/readiness"}:

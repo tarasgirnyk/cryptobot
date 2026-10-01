@@ -163,11 +163,12 @@ class OpenHedgeTests(_Base):
         pos = engine.open_hedge(make_plan(), clients, RiskEngine())
         self.assertEqual(pos["state"], state.RECOVERY)
 
-    def test_partial_mismatch_rebalances(self):
+    def test_partial_mismatch_stops_and_closes(self):
         clients = self._clients(short={"fill": 0.8})
         pos = engine.open_hedge(make_plan(), clients, RiskEngine())
-        self.assertEqual(pos["state"], state.HEDGED)
-        self.assertLessEqual(pos["hedgedBaseQty"], 0.5)
+        self.assertEqual(pos["state"], state.CLOSED)
+        self.assertTrue(runtime.automation_state["killSwitch"])
+        self.assertTrue(all(o["reduce_only"] for o in clients["Binance"].orders[1:]))
 
     def test_expired_plan_rejected(self):
         with self.assertRaises(engine.ExecutionError):

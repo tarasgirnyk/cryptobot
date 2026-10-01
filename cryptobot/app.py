@@ -73,7 +73,9 @@ class Handler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/paper":
             return self.send_json(paper_snapshot())
         if parsed.path != "/api/opportunities":
-            return super().do_GET()
+            if parsed.path in ("/", "/index.html"):
+                return super().do_GET()
+            return self.send_json({"error": "not found"}, 404)
 
         fee_pct = max(0.0, min(number(params.get("fee", ["0.055"])[0]), 1.0))
         self.send_json(market_payload(fee_pct))
@@ -171,6 +173,10 @@ def _execution_health():
             "exchanges": sorted(built),
             "sandbox": config.use_sandbox(),
             "openPositions": len(_live_snapshot()["open"]),
+            "notionalUsdt": config.LIVE_NOTIONAL_USDT,
+            "maxPositions": config.MAX_OPEN_POSITIONS,
+            "dailyLossLimitUsdt": config.LIVE_MAX_DAILY_LOSS_USDT,
+            "allowedSymbols": sorted(config.LIVE_ALLOWED_SYMBOLS),
         }
     except Exception as exc:  # noqa: BLE001
         return {"mode": config.AUTOMATION_MODE, "active": False, "error": str(exc)[:200]}

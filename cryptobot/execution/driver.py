@@ -46,11 +46,15 @@ def _run_exits(clients: dict, force_all: bool = False) -> None:
 # --- входи ----------------------------------------------------------------
 def _try_open(candidate: dict, clients: dict, risk_engine) -> bool:
     symbol = candidate["symbol"]
+    if config.AUTOMATION_MODE == "live" and symbol not in config.LIVE_ALLOWED_SYMBOLS:
+        return False
+    if any(candidate[key] not in clients for key in ("longExchange", "shortExchange")):
+        return False
     opened = state.open_live_positions()
     if candidate_rejection_reason(candidate, opened, now=time.time()):
         return False
     try:
-        depth = depth_analysis(symbol, config.LIVE_NOTIONAL_USDT)
+        depth = depth_analysis(symbol, config.LIVE_NOTIONAL_USDT, opportunity=candidate)
     except Exception as exc:  # noqa: BLE001
         audit("live_depth_error", {"symbol": symbol, "error": str(exc)})
         return False
@@ -91,7 +95,8 @@ def evaluate(payload: dict, allow_entries: bool = True) -> None:
     kill = runtime.automation_state["killSwitch"]
     _run_exits(clients, force_all=kill)
 
-    if kill or runtime.automation_state["paused"] or not allow_entries:
+    if (kill or runtime.automation_state["paused"] or not allow_entries
+            or not runtime.automation_state["startupReconciled"]):
         return
     if risk_engine.daily_loss_tripped():
         if not runtime.automation_state.get("dailyLossAlerted"):
@@ -104,6 +109,8 @@ def evaluate(payload: dict, allow_entries: bool = True) -> None:
     if slots <= 0:
         return
     for candidate in payload.get("opportunities", []):
+        if runtime.automation_state["killSwitch"] or runtime.automation_state["paused"]:
+            break
         if slots <= 0:
             break
         try:
@@ -121,6 +128,11 @@ def startup() -> bool:
         return enabled()
     _started = True
     clients = _registry.get_clients()
+    if set(config.EXECUTION_ENABLED_EXCHANGES) - set(clients):
+        set_control_state(paused=True, kill_switch=True)
+        runtime.automation_state["startupReconciled"] = False
+        audit("executor_incomplete", {"available": list(clients)})
+        return False
     if len(clients) < 2:
         print(
             f"[warn] executor: доступно {len(clients)} бірж (<2) — demo/live "

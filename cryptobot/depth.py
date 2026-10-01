@@ -65,8 +65,8 @@ def load_depth(exchange: str, symbol: str):
     raise ValueError(f"Непідтримувана біржа: {exchange}")
 
 
-def depth_analysis(symbol: str, notional: float):
-    opportunity = opportunity_for(symbol)
+def depth_analysis(symbol: str, notional: float, opportunity=None):
+    opportunity = opportunity if opportunity is not None else opportunity_for(symbol)
     if not opportunity:
         raise ValueError("Символ відсутній у поточному скані")
     long_book = load_depth(opportunity["longExchange"], symbol)

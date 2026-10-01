@@ -111,6 +111,12 @@ EXECUTION_ENABLED_EXCHANGES = tuple(
 )
 DEFAULT_LEVERAGE = int(os.getenv("DEFAULT_LEVERAGE", "10"))
 LIVE_NOTIONAL_USDT = float(os.getenv("LIVE_NOTIONAL_USDT", "50"))
+# Explicit micro-live universe: unknown/new/TradFi products never enter by default.
+LIVE_ALLOWED_SYMBOLS = frozenset(
+    s.strip().upper() for s in os.getenv(
+        "LIVE_ALLOWED_SYMBOLS", "XRPUSDT,DOGEUSDT,ADAUSDT,TRXUSDT,SOLUSDT"
+    ).split(",") if s.strip()
+)
 # demo -> завжди sandbox; live -> завжди реальний. Змінна керує лише demo/тестами.
 EXCHANGE_SANDBOX = os.getenv("EXCHANGE_SANDBOX", "true").strip().lower() != "false"
 

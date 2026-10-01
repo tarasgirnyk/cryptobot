@@ -106,6 +106,18 @@ class RiskEngine:
     def daily_loss(self, now_ms: float | None = None) -> float:
         now_ms = time.time() * 1000 if now_ms is None else now_ms
         self._roll(now_ms)
+        # Durable source covers restarts and closures from every execution path.
+        from cryptobot import storage
+        if storage.db_connection is not None:
+            import json
+            day_start = int(now_ms // 86_400_000) * 86_400_000
+            with storage.db_lock:
+                rows = storage.db_connection.execute(
+                    "SELECT payload FROM live_closed WHERE closed_at >= ? AND closed_at < ?",
+                    (day_start, day_start + 86_400_000),
+                ).fetchall()
+            self._day_realized = sum(float(json.loads(row[0]).get("realizedPnl") or 0)
+                                     for row in rows)
         return self._day_realized
 
     def daily_loss_tripped(self, now_ms: float | None = None) -> bool:

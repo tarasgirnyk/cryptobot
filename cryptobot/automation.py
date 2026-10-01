@@ -29,7 +29,7 @@ def evaluate_automation(payload, allow_entries=True):
 
         if driver.enabled():
             driver.evaluate(payload, allow_entries=allow_entries)
-            return
+        return  # Never silently substitute paper trading for a broken live executor.
 
     # Position exits continue even while new entries are paused.
     for marked in paper_snapshot()["open"]:

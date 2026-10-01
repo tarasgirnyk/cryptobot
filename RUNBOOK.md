@@ -119,6 +119,21 @@ margin-close, `/stop` перевірені.
 
 ## 4. Live micro
 
+Micro-live accepts only `LIVE_ALLOWED_SYMBOLS` (default XRP, DOGE, ADA,
+TRX and SOL USDT perpetuals). TradFi and unreviewed symbols cannot enter.
+Set both `ENABLED_EXCHANGES` and `EXECUTION_ENABLED_EXCHANGES` to
+`Binance,Bybit,BingX` for three-exchange scanning and execution.
+The dashboard shows the actual server mode, configured limits and open live positions.
+`scripts/preflight_live.py` reads production balances, positions, orders and market
+limits without placing orders. Run with the server container environment.
+
+Unknown order outcomes or unconfirmed closes persist as RECOVERY and trigger STOP.
+Do not retry or clear STOP until orders and positions have been reconciled on the
+exchanges. `/resetstop` rechecks exchange state before allowing new entries.
+Daily closed-trade loss is restored from SQLite. Reported PNL uses fill prices and
+configured estimated fees, not exchange-settled funding/fees; reconcile statements
+before scaling. This is not an absolute bound on losses during outages/slippage.
+
 ```dotenv
 AUTOMATION_MODE=live
 # EXCHANGE_SANDBOX ігнорується — live завжди реальний endpoint

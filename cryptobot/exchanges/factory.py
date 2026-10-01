@@ -35,6 +35,7 @@ def build_client(
             "apiKey": account.key,
             "secret": account.secret,
             "enableRateLimit": enable_rate_limit,
+            "timeout": 10000,
             "options": {"defaultType": "swap"},
         }
     )

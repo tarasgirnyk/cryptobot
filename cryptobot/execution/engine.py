@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import threading
 import time
+from functools import wraps
 
-from cryptobot import config
+from cryptobot import config, runtime
 from cryptobot.execution import state
 from cryptobot.execution.state import (
     CLOSED,
@@ -15,13 +16,32 @@ from cryptobot.execution.state import (
     LEG_PENDING,
     RECOVERY,
 )
-from cryptobot.exchanges.base import ExchangeOpError, OrderResult
-from cryptobot.storage import audit
+from cryptobot.exchanges.base import ExchangeOpError, OrderResult, OrderRejected
+from cryptobot.storage import audit, set_control_state
 from cryptobot.telegram import telegram_send
 
 
 class ExecutionError(Exception):
     pass
+
+
+_trade_lock = threading.RLock()
+
+
+def serialized(fn):
+    @wraps(fn)
+    def call(*args, **kwargs):
+        with _trade_lock:
+            return fn(*args, **kwargs)
+    return call
+
+
+def _halt(position, reason):
+    state.set_state(position, RECOVERY, note=reason)
+    set_control_state(paused=True, kill_switch=True)
+    audit("live_execution_halted", {"id": position["id"], "reason": reason})
+    _alert(f"🛑 LIVE STOP {position['symbol']}: {reason}. Перевір позиції та ордери на біржах.")
+    return position
 
 
 # --- helpers --------------------------------------------------------------
@@ -45,8 +65,9 @@ def _place_both(long_call, short_call) -> dict:
     ]
     for thread in threads:
         thread.start()
+    deadline = time.monotonic() + config.ORDER_TIMEOUT_SEC + 5
     for thread in threads:
-        thread.join(timeout=config.ORDER_TIMEOUT_SEC + 5)
+        thread.join(timeout=max(0, deadline - time.monotonic()))
     return out
 
 
@@ -54,7 +75,7 @@ def _resolve_fill(client, symbol, result, deadline) -> OrderResult:
     """Доганяє фінальний стан ордера, якщо market ще не 'closed'."""
     if not isinstance(result, OrderResult):
         raise result if isinstance(result, Exception) else ExecutionError(str(result))
-    while not result.is_done and result.id and time.time() < deadline:
+    while (not result.is_done or (result.filled_base > 0 and result.avg_price <= 0)) and result.id and time.time() < deadline:
         time.sleep(0.5)
         try:
             result = client.fetch_order_result(symbol, result.id)
@@ -88,17 +109,20 @@ def _confirm_flattened(client, symbol, result, deadline) -> bool:
             if not residual or abs(residual.base_qty) <= 0:
                 return order_filled
         except ExchangeOpError:
-            # Якщо позицію звірити не вдалося, покладаємось лише на
-            # підтверджений фінальний fill ордера.
-            return order_filled
+            return False
         time.sleep(0.5)
     return False
 
 
 # --- open --------------------------------------------------------------
+@serialized
 def open_hedge(plan, clients: dict, risk_engine) -> dict:
     """Відкриває хедж LONG/SHORT. Повертає позицію (HEDGED, RECOVERY або FAILED)."""
     now_ms = int(time.time() * 1000)
+    if runtime.automation_state["killSwitch"] or runtime.automation_state["paused"]:
+        raise ExecutionError("entries_stopped")
+    if config.AUTOMATION_MODE == "live" and plan.symbol not in config.LIVE_ALLOWED_SYMBOLS:
+        raise ExecutionError("symbol_not_allowlisted")
     if plan.expired(now_ms):
         audit("live_plan_expired", {"symbol": plan.symbol})
         raise ExecutionError("plan_expired")
@@ -120,8 +144,22 @@ def open_hedge(plan, clients: dict, risk_engine) -> dict:
     qty_long = long_c.amount_for_notional(symbol, plan.notional_usdt, plan.long_ref_price)
     qty_short = short_c.amount_for_notional(symbol, plan.notional_usdt, plan.short_ref_price)
     target = min(qty_long, qty_short)
+    # Round down to a quantity representable on BOTH exchanges.
+    for _ in range(8):
+        rounded = min(
+            long_c.amount_for_notional(symbol, target * plan.long_ref_price, plan.long_ref_price),
+            short_c.amount_for_notional(symbol, target * plan.short_ref_price, plan.short_ref_price),
+        )
+        if abs(rounded - target) <= 1e-10:
+            break
+        target = rounded
     if target <= 0:
         raise ExecutionError("нульовий обсяг після округлення precision")
+    for client, price in ((long_c, plan.long_ref_price), (short_c, plan.short_ref_price)):
+        if target * price > plan.notional_usdt + 1e-8:
+            raise ExecutionError("rounded_notional_exceeds_plan")
+        if hasattr(client, "validate_open"):
+            client.validate_open(symbol, target, price)
 
     # вільна маржа з буфером
     need = plan.notional_usdt / max(1, plan.leverage) * (1 + config.MARGIN_BUFFER_PCT / 100)
@@ -130,6 +168,9 @@ def open_hedge(plan, clients: dict, risk_engine) -> dict:
         if free < need:
             audit("live_insufficient_margin", {"exchange": client.name, "free": free, "need": need})
             raise ExecutionError(f"недостатньо маржі на {client.name}: {free:.2f} < {need:.2f}")
+
+    if plan.expired() or runtime.automation_state["killSwitch"] or runtime.automation_state["paused"]:
+        raise ExecutionError("plan_expired_or_stopped_during_preflight")
 
     position = state.new_position(plan, target)
     long_id = f"{position['clientPrefix']}A"
@@ -164,6 +205,12 @@ def open_hedge(plan, clients: dict, risk_engine) -> dict:
     audit("live_open_fills", {"id": position["id"], **store_snapshot,
                               "longErr": str(long_err or ""), "shortErr": str(short_err or "")})
 
+    # A timeout/error or nonterminal order is NOT evidence of zero execution.
+    # Keep the durable intent for reconciliation; never send a duplicate order.
+    if (any(err is not None and not isinstance(err, OrderRejected) for err in (long_err, short_err))
+            or any(res is not None and not res.is_done for res in (long_res, short_res))):
+        return _halt(position, "order outcome uncertain; reconciliation required")
+
     tol = _tolerance(target)
 
     # --- обидві ноги провалились ---
@@ -183,7 +230,10 @@ def open_hedge(plan, clients: dict, risk_engine) -> dict:
         ok = _confirm_flattened(
             filled_client, symbol, flat, time.time() + config.ORDER_TIMEOUT_SEC
         )
-        _finish(position, FAILED if not ok else RECOVERY, note="recovered one-legged fill")
+        if not ok:
+            return _halt(position, "one-legged recovery not confirmed flat")
+        _finish(position, RECOVERY, note="recovered one-legged fill")
+        set_control_state(paused=True, kill_switch=True)
         audit("live_recovery", {"id": position["id"], "side": filled_side, "qty": qty, "flattened": ok})
         _alert(
             f"⚠️ LIVE RECOVERY {symbol}\nЗалилась лише нога {filled_side}. "
@@ -191,37 +241,18 @@ def open_hedge(plan, clients: dict, risk_engine) -> dict:
         )
         return position
 
-    # --- обидві залиті, але перекіс > tolerance -> вирівнюємо ---
+    # Unbalanced partial execution needs reconciliation, never an unverified top-up.
+    position["entryLongPrice"] = long_res.avg_price
+    position["entryShortPrice"] = short_res.avg_price
     if abs(long_fill - short_fill) > tol:
-        deficit_side = "long" if long_fill < short_fill else "short"
-        deficit_client = long_c if deficit_side == "long" else short_c
-        delta = abs(long_fill - short_fill)
-        side_word = position["legs"][deficit_side]["side"]
-        try:
-            fix = deficit_client.market_order(
-                symbol, side_word, delta, f"{position['clientPrefix']}F{deficit_side[0]}", reduce_only=False
-            )
-            if deficit_side == "long":
-                long_fill += fix.filled_base
-            else:
-                short_fill += fix.filled_base
-            position["legs"][deficit_side]["filledBase"] = long_fill if deficit_side == "long" else short_fill
-        except Exception as exc:  # noqa: BLE001
-            audit("live_rebalance_failed", {"id": position["id"], "error": str(exc)})
-
-    if abs(long_fill - short_fill) > tol:
-        # не вирівнялось — зводимо до меншого і працюємо з ним
-        bigger_side = "long" if long_fill > short_fill else "short"
-        bigger_client = long_c if bigger_side == "long" else short_c
-        excess = abs(long_fill - short_fill)
-        _flatten_leg(bigger_client, symbol, position["legs"][bigger_side]["side"], excess,
-                     f"{position['clientPrefix']}T")
-        hedged_qty = min(long_fill, short_fill)
-    else:
-        hedged_qty = (long_fill + short_fill) / 2
+        _halt(position, "unequal partial fills")
+        return close_hedge(position, "partial_fill", clients)
+    hedged_qty = min(long_fill, short_fill)
 
     long_price = long_res.avg_price if long_res else 0.0
     short_price = short_res.avg_price if short_res else 0.0
+    if long_price <= 0 or short_price <= 0:
+        return _halt(position, "fill price missing")
     entry_exec_spread = (
         (short_price - long_price) / long_price * 100 if long_price > 0 and short_price > 0
         else position["entryExecutableSpreadPct"]
@@ -243,6 +274,7 @@ def open_hedge(plan, clients: dict, risk_engine) -> dict:
 
 
 # --- close -----------------------------------------------------------
+@serialized
 def close_hedge(position: dict, reason: str, clients: dict) -> dict:
     """Закриває обидві ноги market reduce-only і фіксує реалізований PNL."""
     if position.get("state") in (CLOSED, FAILED):
@@ -254,40 +286,45 @@ def close_hedge(position: dict, reason: str, clients: dict) -> dict:
 
     qty = position.get("hedgedBaseQty") or position.get("targetBaseQty") or 0.0
     # звіряємось із фактичною позицією на біржі, якщо доступно
+    close_qty = {}
     for tag, client in (("long", long_c), ("short", short_c)):
         try:
             live_pos = client.position(symbol) if client else None
+            close_qty[tag] = position["legs"][tag].get("filledBase") or qty
             if live_pos and abs(live_pos.base_qty) > 0:
-                qty = max(qty, abs(live_pos.base_qty))
+                close_qty[tag] = abs(live_pos.base_qty)
         except ExchangeOpError:
-            pass
+            return _halt(position, "cannot read position before close")
 
     prefix = position["clientPrefix"]
     results = _place_both(
-        lambda out, key: _place_leg(long_c, symbol, "sell", qty, f"{prefix}CA", True, out, key),
-        lambda out, key: _place_leg(short_c, symbol, "buy", qty, f"{prefix}CB", True, out, key),
+        lambda out, key: _place_leg(long_c, symbol, "sell", close_qty["long"], f"{prefix}CA", True, out, key),
+        lambda out, key: _place_leg(short_c, symbol, "buy", close_qty["short"], f"{prefix}CB", True, out, key),
     )
     deadline = time.time() + config.ORDER_TIMEOUT_SEC
     long_res = _safe_resolve(long_c, symbol, results.get("long"), deadline)
     short_res = _safe_resolve(short_c, symbol, results.get("short"), deadline)
 
-    # друга спроба добити залишок
-    for tag, client, side in (("long", long_c, "sell"), ("short", short_c, "buy")):
+    if any(res is None or not res.is_done for res in (long_res, short_res)):
+        return _halt(position, "close order outcome uncertain")
+
+    for client in (long_c, short_c):
         try:
-            residual = client.position(symbol) if client else None
-            if residual and abs(residual.base_qty) > _tolerance(qty):
-                client.market_order(symbol, side, abs(residual.base_qty),
-                                    f"{prefix}{tag[0].upper()}2", reduce_only=True)
-        except ExchangeOpError as exc:
-            audit("live_close_residual_failed", {"id": position["id"], "error": str(exc)})
+            residual = client.position(symbol)
+            if residual and abs(residual.base_qty) > 0:
+                return _halt(position, "close left residual exposure")
+        except Exception:
+            return _halt(position, "cannot verify flat after close")
+    if any(not res.is_filled or res.avg_price <= 0 for res in (long_res, short_res)):
+        return _halt(position, "close fill accounting incomplete")
 
     exit_long = long_res.avg_price if long_res else 0.0
     exit_short = short_res.avg_price if short_res else 0.0
     entry_long = position.get("entryLongPrice") or 0.0
     entry_short = position.get("entryShortPrice") or 0.0
     fees = position["notional"] * position.get("roundTripFeesPct", 0) / 100
-    long_pnl = (exit_long - entry_long) * qty if entry_long and exit_long else 0.0
-    short_pnl = (entry_short - exit_short) * qty if entry_short and exit_short else 0.0
+    long_pnl = (exit_long - entry_long) * long_res.filled_base if entry_long and exit_long else 0.0
+    short_pnl = (entry_short - exit_short) * short_res.filled_base if entry_short and exit_short else 0.0
     realized = long_pnl + short_pnl - fees
     realized_pct = realized / position["notional"] * 100 if position["notional"] else 0.0
 
@@ -300,6 +337,8 @@ def close_hedge(position: dict, reason: str, clients: dict) -> dict:
     position["closedAt"] = int(time.time() * 1000)
     position["state"] = CLOSED
     state.store_close(position)
+    from cryptobot.execution.clients import get_risk_engine
+    get_risk_engine().register_close(realized)
     audit("live_close", {"id": position["id"], "symbol": symbol, "reason": reason,
                          "realizedPnl": realized})
     _alert(

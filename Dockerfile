@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=cryptobot:cryptobot server.py index.html README.md ARCHITECTURE.md ./
 COPY --chown=cryptobot:cryptobot cryptobot ./cryptobot
+COPY --chown=cryptobot:cryptobot scripts ./scripts
 RUN mkdir -p /app/data && chown cryptobot:cryptobot /app/data
 
 USER cryptobot
