@@ -1,5 +1,11 @@
 """Read-only production checks; never sets modes/leverage or creates orders."""
 import json
+import sys
+from pathlib import Path
+
+# Direct execution sets sys.path[0] to ``scripts/`` rather than the app root.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from cryptobot import config
 from cryptobot.exchanges import AccountPool, build_client
 
