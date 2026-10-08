@@ -1,245 +1,43 @@
-# CryptoBOT RUNBOOK
+# Порядок роботи з документацією CryptoBOT
 
-Операційний чекліст переходу `paper → demo → live`. Кожен етап має критерії
-виходу; не переходь далі, доки вони не виконані.
+Оновлено: 8 жовтня 2026 року.
 
-Скорочення: «двигун» = `cryptobot/execution/`, «звірка» = `startup_reconcile`.
+## Поточний етап
 
----
+Проходження спільного чекліста й уточнення продукту. Дизайн відкладено.
+У локальній копії немає виконуваного коду, сайту чи конфігурацій розгортання.
+Документи отримано із ZIP; 8 жовтня папку під'єднано до git-історії GitHub
+за дорученням Тараса. Фактична папка вказана в [README.md](README.md).
+Інструкції запуску старого бота не застосовуються до цього етапу.
 
-## 0. Передумови
+## Робочий порядок
 
-- Python 3.11+, `pip install -r requirements.txt` (ставить `ccxt`).
-- `.env` з `.env.example`. Ніколи не комітити `.env`.
-- Капітал розкладений вручну по біржах — авто-переказу немає.
-- API-ключі **без права виводу коштів**. Окремі ключі для demo і для live.
-- Мінімум **2 біржі** з ключами (`BINANCE_API_KEYS`, `BYBIT_API_KEYS`,
-  `BINGX_API_KEYS`, `MEXC_API_KEYS`, формат `key:secret`).
+1. Вибрати блок у PROJECT_CHECKLIST.md.
+2. Обговорити його питання й зафіксувати відповіді у профільному документі.
+3. Відокремити погоджене рішення від гіпотези та пропозиції.
+4. Оновити DECISIONS.md і відповідні пункти чекліста.
+5. Вказати відповідального й строк, коли вони погоджені.
+6. Зберегти зміни в локальних документах і git. Push — лише за прямим
+   дорученням Тараса; документи не замінюються старими версіями з GitHub.
 
-Швидка перевірка збірки:
+Пункт позначається виконаним лише після письмово зафіксованого рішення або
+перевіреного результату. Домовленість зробити функцію не означає, що вона готова.
 
-```bash
-python -m unittest discover -s tests -v
-python server.py   # → http://127.0.0.1:8765 , /api/health = ok
-```
+## Найближче обговорення
 
----
+- Уточнити приклад персонального завдання Тараса: п'ять партнерів, 500 USD
+  та вигода для залучених людей. Усі починають із першого рівня; його назва
+  та належність до статусу ще відкриті. Високі вимоги до наступних рівнів
+  погоджені як напрям, але пороги й завдання ще не визначені.
+- База та ставки обов'язкової щомісячної комісії; її сплату додатково до
+  підписки вже погоджено, знижок і промокодів немає.
+- Безкоштовність Paper.
+- Продуктовий рівень і партнерський статус уже визначені як різні;
+  уточнити, до якого належать депозит, бали та персональні переходи.
+- Пороги депозиту й балів, правила зарахування завдань та умови прямого
+  переходу за персональним завданням.
 
-## 1. Paper (базовий збір статистики)
-
-```dotenv
-AUTOMATION_MODE=paper
-```
-
-Крутиться до `/report` (Telegram) або `/api/readiness`:
-
-- ≥ `READINESS_MIN_CLOSED_TRADES` закритих угод;
-- ≥ `READINESS_MIN_DAYS` днів спостереження;
-- закритий PNL > 0;
-- stop rate ≤ `READINESS_MAX_STOP_RATE_PCT`;
-- ринкові дані обох бірж справні.
-
-Тут же підганяються пороги (`PAPER_ENTRY_NET_PCT`, `PAPER_MAX_HOLD_HOURS`,
-`DEPTH_GATE_MIN_NOTIONAL`, `FUNDING_*`).
-
-**Вихід:** критерії readiness виконані щонайменше 1 тиждень поспіль.
-
----
-
-## 2. Demo (реальні API, testnet-кошти)
-
-### 2.1 Ключі testnet
-
-- Binance USDⓈ-M Futures Testnet: <https://testnet.binancefuture.com> → API key.
-- Bybit Testnet: <https://testnet.bybit.com> → API key (потрібен навіть для
-  `load_markets` — ccxt б'є приватний endpoint).
-- BingX: демо/VST-акаунт, якщо доступний; інакше BingX у demo пропускається.
-
-```dotenv
-AUTOMATION_MODE=demo
-EXCHANGE_SANDBOX=true
-EXECUTION_ENABLED_EXCHANGES=Binance,Bybit
-BINANCE_API_KEYS=key:secret
-BYBIT_API_KEYS=key:secret
-LIVE_NOTIONAL_USDT=50
-MAX_OPEN_POSITIONS=1
-DEFAULT_LEVERAGE=10
-```
-
-### 2.2 Запуск і що дивитись
-
-```bash
-python server.py
-```
-
-У логу має бути `[ok] executor готовий: Binance, Bybit (sandbox=True)`.
-Якщо `<2` бірж — `[warn] ... поводиться як paper`: перевір ключі.
-
-- `/api/health` → блок `execution.active = true`, `startupReconciled = true`.
-- `/api/live` → `open` / `closed`.
-- Telegram: `🟢 LIVE HEDGED`, `🔵 LIVE CLOSE`, `⚠️ LIVE RECOVERY`.
-- SQLite `audit_events` kinds: `live_open`, `live_open_fills`, `live_hedged`,
-  `live_close`, `live_recovery`, `reconcile_ok`, `margin_warn`.
-
-### 2.3 Ручні перевірки
-
-1. Дочекатись 3–5 повних циклів `live_open → live_hedged → live_close`.
-2. Звірити `realizedPnl` у `live_closed` з фактичними філами на testnet.
-3. `/positions` у Telegram показує live-рядки; кнопка `Закрити` працює
-   (callback `lclose:<id>`).
-4. `/stop` → всі live-позиції закриваються протягом одного тіку; `/resetstop`
-   знімає STOP.
-5. Штучно занизити `MARGIN_CRITICAL` (напр. `0.01`) → позиція має закритись із
-   `reason=margin`. Повернути значення назад.
-
-**Вихід:** ≥ 3 днів demo без незакритих односторонніх виконань; recovery,
-margin-close, `/stop` перевірені.
-
----
-
-## 3. Chaos-тест (обов'язково перед live)
-
-Ціль: переконатись, що краш під час відкриття не лишає orphan-позицію
-непоміченою.
-
-1. У demo дочекатись сигналу і під час `open_hedge` **вбити процес**:
-   `Stop-Process -Id <pid> -Force` (Win) / `kill -9 <pid>`.
-2. Перезапустити `python server.py`.
-3. Очікувано:
-   - `/api/health` → `startupReconciled = false`, `killSwitch = true`;
-   - Telegram: `🛑 STARTUP RECONCILE: розбіжність стану` зі списком;
-   - `audit_events` має `reconcile_mismatch`.
-4. Вручну звести позиції на біржах до нуля (або лишити хедж навмисно), потім
-   `/resetstop`. Переконатись, що після цього `startup_reconcile` дає `reconcile_ok`.
-
-Автотести цього сценарію: `tests/test_execution.py::ReconcileTests` та
-`test_incomplete_state_after_crash_is_flagged`.
-
----
-
-## 4. Live micro
-
-Micro-live accepts only `LIVE_ALLOWED_SYMBOLS` (default XRP, DOGE, ADA,
-TRX and SOL USDT perpetuals). TradFi and unreviewed symbols cannot enter.
-Set both `ENABLED_EXCHANGES` and `EXECUTION_ENABLED_EXCHANGES` to
-`Binance,Bybit,BingX` for three-exchange scanning and execution.
-The dashboard shows the actual server mode, configured limits and open live positions.
-`scripts/preflight_live.py` reads production balances, positions, orders and market
-limits without placing orders. Run with the server container environment.
-
-Unknown order outcomes or unconfirmed closes persist as RECOVERY and trigger STOP.
-Do not retry or clear STOP until orders and positions have been reconciled on the
-exchanges. `/resetstop` rechecks exchange state before allowing new entries.
-Daily closed-trade loss is restored from SQLite. Reported PNL uses fill prices and
-configured estimated fees, not exchange-settled funding/fees; reconcile statements
-before scaling. This is not an absolute bound on losses during outages/slippage.
-
-```dotenv
-AUTOMATION_MODE=live
-# EXCHANGE_SANDBOX ігнорується — live завжди реальний endpoint
-BINANCE_API_KEYS=<real key:secret, без виводу>
-BYBIT_API_KEYS=<real key:secret, без виводу>
-LIVE_NOTIONAL_USDT=20
-MAX_OPEN_POSITIONS=1
-LIVE_MAX_NOTIONAL_PER_POS=50
-LIVE_MAX_TOTAL_NOTIONAL=50
-LIVE_MAX_DAILY_LOSS_USDT=15
-API_BEARER_TOKEN=<якщо панель за проксі>
-```
-
-- Перший запуск — під наглядом, поруч термінал і Telegram.
-- Перевірити `execution.sandbox = false` у `/api/health`.
-- Кілька днів, кожну угоду звіряти вручну з біржами.
-- Будь-яка `live_recovery`, що не змогла закрити ногу → зупинитись, розібратись.
-
-**Вихід:** ≥ 20 закритих live-угод, жодного необробленого односторонього
-виконання, реалізований PNL зійшовся з біржами.
-
----
-
-## 5. Live scale
-
-Піднімати поступово: `LIVE_NOTIONAL_USDT` 20 → 50 → 100 → 300, паралельно
-`LIVE_MAX_*` і `MAX_OPEN_POSITIONS`. Після кожного кроку — тиждень спостереження.
-Плаваючі плечі за правилами — окремий етап, не змішувати з масштабуванням.
-
----
-
-## Аварійні процедури
-
-| Ситуація | Дія |
-|---|---|
-| Хочу все зупинити | Telegram `/stop` — блокує входи, закриває live-позиції, STOP зберігається після рестарту |
-| Після рестарту `startupReconciled=false` | НЕ робити `/resetstop` наосліп; звірити позиції на біржах вручну, довести до узгодженого стану, тоді `/resetstop` |
-| `⚠️ MARGIN WARN` | стежити; якщо росте — `/close_<id>` або `/stop` |
-| Бан акаунта (`AccountSuspended`/auth) | двигун позначає ключ, але ротація ще не автоматична — підкласти інший ключ у `.env` і перезапустити |
-| Ринкові дані впали | входи блокуються автоматично; виходи по відкритих позиціях працюють |
-| Зникло `execution.active` | бракує ключів або `load_markets` впав; дивись `audit_events` kind `executor_exchange_failed` |
-
-## Деплой на сервер (Docker)
-
-Потрібен Linux-сервер із Docker + docker compose. Панель слухає лише
-`127.0.0.1` — назовні тільки через SSH-тунель або reverse proxy з авторизацією.
-
-Перший раз:
-
-```bash
-sudo mkdir -p /opt/cryptobot && sudo chown "$USER" /opt/cryptobot
-git clone https://github.com/tarasgirnyk/cryptobot.git /opt/cryptobot
-cd /opt/cryptobot
-cp .env.example .env
-nano .env        # AUTOMATION_MODE, ключі бірж, Telegram, API_BEARER_TOKEN
-./deploy.sh
-```
-
-`deploy.sh` робить `git reset --hard origin/main`, `docker compose up -d --build`
-і чекає `/api/health`. Оновлення — просто `cd /opt/cryptobot && ./deploy.sh`.
-
-Секрети: або в `.env` (chmod 600, не в git), або через Docker secrets — розкоментуй
-`secrets:` у `compose.yaml` і поклади файли в `/opt/cryptobot/secrets/` (у
-`.gitignore`), тоді в `.env` лиши тільки `*_FILE`-змінні.
-
-Доступ до панелі з ноутбука (SSH-тунель, нічого не відкриваючи назовні):
-
-```bash
-ssh -N -L 8771:127.0.0.1:8771 user@server
-# → http://127.0.0.1:8771
-```
-
-### Публічний HTTPS + логін/пароль (Caddy)
-
-Якщо треба відкрити панель на зовнішню IP:
-
-```bash
-cp Caddyfile.example Caddyfile
-docker run --rm caddy caddy hash-password --plaintext 'ПАРОЛЬ'   # -> $2a$... хеш
-# вставити хеш у Caddyfile замість REPLACE_WITH_BCRYPT_HASH, за потреби
-# замінити 91.245.76.78 на свою IP/домен
-ufw allow 80/tcp && ufw allow 443/tcp     # якщо ufw активний
-./deploy.sh                                # підхопить Caddyfile і підніме проксі
-```
-
-Далі `https://<ip>/` → браузер один раз попередить про self-signed сертифікат
-(внутрішній CA Caddy) → логін. Cryptobot лишається на `127.0.0.1`, Caddy —
-єдині відкриті порти. З реальним доменом заміни `tls internal` на `tls you@mail`
-для Let's Encrypt без попередження.
-
-Логи і стан:
-
-```bash
-docker compose -f /opt/cryptobot/compose.yaml logs -f cryptobot
-docker compose -f /opt/cryptobot/compose.yaml ps
-```
-
-Дані (`data/cryptobot.db`) живуть у Docker volume `cryptobot_data` і переживають
-`deploy.sh`. Аварійна зупинка: `docker compose down` (позиції в demo/live це НЕ
-закриває — спершу `/stop` у Telegram).
-
-## Обмеження цієї версії
-
-- Ордери лише `market`, вихід теж `market`.
-- Немає авто-переказу маржі між біржами — тільки алерт «поповни X».
-- Ротація ключів при бані — інтерфейс є, автоперемикання немає.
-- Фандінг-інтервал береться дефолтний per-exchange, не per-symbol.
-- MEXC futures використовує isolated margin і цілу кількість контрактів; перед
-  live обов'язково виконати dry-run та контрольований micro open/close.
+Після цього продовжуємо чекліст: алгоритм, статистика, ризик-профілі, MVP,
+фінансова модель та решта блоків. Старий код доступний в отриманій git-історії
+GitHub, але не входить до поточної версії. Нову реалізацію потрібно окремо
+погодити й перевірити.

@@ -1,8 +1,0 @@
-.env
-.git
-secrets/
-data/
-**/__pycache__
-*.pyc
-tests/
-RUNBOOK.md
